@@ -101,8 +101,8 @@ def fetch_papers_with_code() -> list[Item]:
     logger.info("Fetching Papers With Code API")
     try:
         resp = requests.get(
-            "https://paperswithcode.com/api/v1/papers/?ordering=-published&items_per_page=20",
-            headers=HEADERS,
+            "https://paperswithcode.com/api/v1/papers/?ordering=-arxiv_first_version&items_per_page=20",
+            headers={**HEADERS, "Accept": "application/json"},
             timeout=REQUEST_TIMEOUT,
         )
         resp.raise_for_status()

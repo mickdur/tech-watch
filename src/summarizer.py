@@ -8,7 +8,7 @@ from src.fetcher import Item
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 2000
 
 SYSTEM_PROMPT = (
