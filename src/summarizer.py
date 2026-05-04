@@ -75,27 +75,49 @@ def summarize(items: list[Item], slot: str) -> str:
         logger.warning("No items to summarize — skipping API call")
         return "No significant updates in this cycle."
 
-    user_content = (
-        f"RUN_SLOT: {slot}\n\n"
-        f"{instructions}\n\n"
-        f"Here are the {len(items)} items to process:\n\n"
-        f"{_format_items(items)}"
-    )
-
     logger.info("Calling Claude API with %d items (slot=%s)", len(items), slot)
 
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_content}],
+        # System prompt is static — cache it.
+        system=[{
+            "type": "text",
+            "text": SYSTEM_PROMPT,
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=[{
+            "role": "user",
+            "content": [
+                # Instructions include only the date (same for morning and afternoon),
+                # so this block is a cache hit on the afternoon run.
+                {
+                    "type": "text",
+                    "text": instructions,
+                    "cache_control": {"type": "ephemeral"},
+                },
+                # Slot and item list change every run — not cached.
+                {
+                    "type": "text",
+                    "text": (
+                        f"RUN_SLOT: {slot}\n\n"
+                        f"Here are the {len(items)} items to process:\n\n"
+                        f"{_format_items(items)}"
+                    ),
+                },
+            ],
+        }],
     )
 
     digest = message.content[0].text.strip()
+    cache_created = getattr(message.usage, "cache_creation_input_tokens", 0) or 0
+    cache_read = getattr(message.usage, "cache_read_input_tokens", 0) or 0
     logger.info(
-        "Claude response: %d chars, stop_reason=%s",
+        "Claude response: %d chars, stop_reason=%s, cache_created=%d, cache_read=%d",
         len(digest),
         message.stop_reason,
+        cache_created,
+        cache_read,
     )
     return digest
