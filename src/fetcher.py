@@ -1,7 +1,8 @@
+import socket
 import time
 import logging
 from datetime import datetime, timezone, timedelta
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import feedparser
@@ -55,7 +56,8 @@ def _excerpt(entry) -> str:
 
 def _fetch_feed(name: str, url: str) -> list[Item]:
     logger.info("Fetching RSS: %s", name)
-    feed = feedparser.parse(url, request_headers=HEADERS, timeout=REQUEST_TIMEOUT)
+    socket.setdefaulttimeout(REQUEST_TIMEOUT)
+    feed = feedparser.parse(url, request_headers=HEADERS)
     cutoff = _cutoff()
     items = []
     for entry in feed.entries:
@@ -96,26 +98,32 @@ def fetch_rss_sources() -> list[Item]:
 
 
 def fetch_papers_with_code() -> list[Item]:
-    logger.info("Fetching Papers With Code (homepage)")
+    logger.info("Fetching Papers With Code API")
     try:
         resp = requests.get(
-            "https://paperswithcode.com",
+            "https://paperswithcode.com/api/v1/papers/?ordering=-published&items_per_page=20",
             headers=HEADERS,
             timeout=REQUEST_TIMEOUT,
         )
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+        data = resp.json()
+        cutoff = _cutoff()
         items = []
-        for card in soup.select(".paper-card")[:20]:
-            title_el = card.select_one("h1 a, h2 a, .item-heading a")
-            if not title_el:
+        for paper in data.get("results", []):
+            published_str = paper.get("published") or paper.get("date_updated") or ""
+            pub = None
+            if published_str:
+                try:
+                    pub = datetime.fromisoformat(published_str.rstrip("Z")).replace(tzinfo=timezone.utc)
+                except Exception:
+                    pass
+            if pub and pub < cutoff:
                 continue
-            title = title_el.get_text(strip=True)
-            href = title_el.get("href", "")
-            url = href if href.startswith("http") else f"https://paperswithcode.com{href}"
-            abstract_el = card.select_one(".item-strip-abstract, p")
-            excerpt = abstract_el.get_text(" ", strip=True)[:300] if abstract_el else ""
-            items.append(Item(title=title, url=url, source="Papers With Code", excerpt=excerpt))
+            title = paper.get("title", "").strip()
+            arxiv_id = paper.get("arxiv_id", "")
+            url = f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else f"https://paperswithcode.com/paper/{paper.get('id', '')}"
+            excerpt = paper.get("abstract", "")[:300]
+            items.append(Item(title=title, url=url, source="Papers With Code", published=pub, excerpt=excerpt))
         logger.info("  -> %d items from Papers With Code", len(items))
         return items
     except Exception as exc:
@@ -124,32 +132,28 @@ def fetch_papers_with_code() -> list[Item]:
 
 
 def fetch_reddit_ml() -> list[Item]:
-    logger.info("Fetching Reddit r/MachineLearning")
+    logger.info("Fetching Reddit r/MachineLearning (RSS)")
     try:
-        resp = requests.get(
-            "https://www.reddit.com/r/MachineLearning/hot.json?limit=25",
-            headers=HEADERS,
-            timeout=REQUEST_TIMEOUT,
+        socket.setdefaulttimeout(REQUEST_TIMEOUT)
+        feed = feedparser.parse(
+            "https://www.reddit.com/r/MachineLearning/hot.rss?limit=25",
+            request_headers=HEADERS,
         )
-        resp.raise_for_status()
-        data = resp.json()
         cutoff = _cutoff()
         items = []
-        for post in data["data"]["children"]:
-            p = post["data"]
-            created = datetime.fromtimestamp(p.get("created_utc", 0), tz=timezone.utc)
-            if created < cutoff:
+        for entry in feed.entries:
+            pub = _parse_rss_date(entry)
+            if pub and pub < cutoff:
                 continue
-            title = p.get("title", "").strip()
-            permalink = p.get("permalink", "")
-            url = f"https://www.reddit.com{permalink}"
-            selftext = p.get("selftext", "")[:300]
+            title = entry.get("title", "").strip()
+            url = entry.get("link", "")
+            excerpt = _excerpt(entry)
             items.append(Item(
                 title=title,
                 url=url,
                 source="Reddit r/MachineLearning",
-                published=created,
-                excerpt=selftext,
+                published=pub,
+                excerpt=excerpt,
             ))
         logger.info("  -> %d items from Reddit r/MachineLearning", len(items))
         return items
