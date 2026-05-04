@@ -40,11 +40,17 @@ def main() -> None:
     from src.fetcher import fetch_all
     items = fetch_all()
 
-    # 2. Filter to relevant topics
+    # 2. Deduplicate against previously seen URLs
+    from src.state import load_seen_urls, save_seen_urls
+    seen = load_seen_urls()
+    items = [i for i in items if i.url not in seen]
+    logger.info("After dedup: %d items remaining", len(items))
+
+    # 3. Filter to relevant topics
     from src.filter import filter_items
     relevant = filter_items(items)
 
-    # 3. Summarize with Claude
+    # 4. Summarize with Claude
     from src.summarizer import summarize
     try:
         digest = summarize(relevant, slot)
@@ -54,9 +60,12 @@ def main() -> None:
 
     logger.info("Digest preview (first 200 chars): %s", digest[:200])
 
-    # 4. Send to Telegram
+    # 5. Send to Telegram
     from src.telegram import send_digest
     send_digest(digest)
+
+    # 6. Persist seen URLs so items are not repeated in future runs
+    save_seen_urls([i.url for i in items])
 
     logger.info("=== Tech-watch complete ===")
 
